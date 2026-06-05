@@ -1,0 +1,170 @@
+% ------------------------------------------------------------------------
+% Main script for solving Fredholm integral equation of the second kind
+% using composite Gauss-Jacobi / Gauss-Legendre quadrature.
+% The kernel has a  singularity at s=0, treated by Gauss-Jacobi on the
+% first subinterval.
+% ------------------------------------------------------------------------
+
+clc; clear; close all;
+
+% Domain and quadrature parameters
+a = 0; b = 1;
+k = 10;                % order of Gauss-Jacobi (points per subinterval)
+m = 10;                 % number of subintervals (m=1 => pure Gauss-Jacobi)
+n = k * m;             % total number of nodes
+h = (b - a) / n;       % global step
+example = 3;           % select example 1, 2, or 3
+
+% Problem definition (depends on 'example')
+switch example
+    case 1
+        rho = 1/8; alpha = -1/2; beta = 0;
+        exact = @(t) t.^(1/4);
+        f = @(t) -(rho*t.^(1/4) - rho*(cos(t+1)-cos(t))) + t.^(1/4);
+        K = @(t,s,u) rho*( sin(t+s) + 2.*s.*t.^(1/4) ) .* u.^2;
+        K_Singular = @(t,s,u) rho*s.^(alpha) .* ( sin(t+s) + 2.*s.*t.^(1/4) ) .* u.^2;
+           
+    case 2
+        rho = 1/6;alpha = -1/2; beta = 0;
+        exact = @(t) 1;
+        f = @(t) -((2*rho.*(3*t + 2*t.^(1/4) + 1))/3) + 1;
+        K = @(t,s,u) rho* ( (t + s) + 2.*s.*t.^(1/4) ) .* u.^2;
+        K_Singular = @(t,s,u) rho* s.^(alpha) .* ( (t + s) + 2.*s.*t.^(1/4) ) .* u.^2;
+               
+    case 3
+        rho = 1/4;alpha = -1/2; beta = 0;
+        exact = @(t) t.^(1/4);
+        f = @(t) -(rho*t.*(cos(t)-cos(t+1)+t.^(1/4))) + t.^(1/4);
+        K = @(t,s,u) rho* t.*( sin(t+s) + 2.*s.*t.^(1/4) ) .* u.^2;
+        K_Singular = @(t,s,u) rho*t.*s.^(alpha) .* ( sin(t+s) + 2.*s.*t.^(1/4) ) .* u.^2;
+        
+end
+
+% ------------------------------------------------------------------------
+% 1. Gauss-Jacobi quadrature for the first subinterval (handles singularity)
+% ------------------------------------------------------------------------
+[refN, refW] = Gauss_Jacobi(k, alpha, beta);
+refN1 = (refN + 1) / 2;          % map from [-1,1] to [0,1]
+nodes1 = (1 - refN1);            % nodes clustered near 0 (singularity)
+w1 = refW * (2/m)^(-(alpha + beta + 1));   % scaling for subinterval length
+
+% ------------------------------------------------------------------------
+% 2. Gauss-Legendre quadrature (Jacobi with \apha=\beta=0) for other subintervals
+% ------------------------------------------------------------------------
+[refN2, refW2] = Gauss_Jacobi(k, 0, 0);
+refN2 = (refN2 + 1) / 2;
+nodes2 = (1 - refN2);
+w0 = refW2 * (2)^(-1);
+
+% ------------------------------------------------------------------------
+% 3. Build global nodes and weights (composite rule)
+% ------------------------------------------------------------------------
+nodes = zeros(1, n);
+w = zeros(1, n);
+
+% First subinterval [a, a + k*h] (contains the singularity)
+nodes(1:k) = (a + k * nodes1 * h);
+w(1:k)     = (w1 * k * h);
+
+cnt = k;
+I = linspace(0, 1, m+1);   % partition points (not used for m=1)
+for p = 2:m
+    tL = a + (p-1)*k*h;
+    tR = tL + k*h;   % not used, kept for clarity
+    nodes(cnt + (1:k)) = I(p) + k*h * nodes2;
+    w(cnt + (1:k))     = w0 * k * h;
+    cnt = cnt + k;
+end
+
+% ------------------------------------------------------------------------
+% 4. Fixed-point iteration (Gauss-Seidel style)
+% ------------------------------------------------------------------------
+tol = 1e-100;
+iter = 0;
+ys = inf(1, n);
+xs = f(ones(1, n)) + 1/10;   % initial guess
+
+tic
+while max(abs(ys - xs)) > tol && iter < 201
+    ys = xs;
+    iter = iter + 1
+    for s = 1:n
+        xs(s) = f(nodes(s)) + weightedSum(xs, s, w, nodes, K, m, k, K_Singular);
+        % Optional under-relaxation (commented)
+        % xs(s) = xs(s)/2 + (f(nodes(s)) + weightedSum(...))/2;
+    end
+end
+toc
+
+% ------------------------------------------------------------------------
+% 5. Reorder subinterval nodes to ascending order (for plotting)
+% ------------------------------------------------------------------------
+for j = 0:k:n-k
+    nodes(1+j:k+j) = flip(nodes(1+j:k+j));
+    xs(1+j:k+j)    = flip(xs(1+j:k+j));
+end
+
+% ------------------------------------------------------------------------
+% 6. Error computation and plotting
+% ------------------------------------------------------------------------
+L = arrayfun(exact, nodes);
+e = abs(L - xs);
+M = max(e)
+
+figure;
+plot(nodes, e, 'b.', 'LineWidth', 2, 'MarkerSize', 10, ...
+     'MarkerEdgeColor', 'b', 'MarkerFaceColor', [0.5,0.5,0.5]);
+grid on;
+xlabel('Nodes');
+ylabel('Error');
+title('Error of Gauss-Jacobi');
+yline(max(e), '--r', sprintf('Y = %.10e', max(e)), 'LineWidth', 2);
+yline(min(e), '--r', sprintf('Y = %.10e', min(e)), ...
+       'LabelHorizontalAlignment', 'right', 'LineWidth', 2);
+ax = gca; ax.FontSize = 16;
+
+% Optional save (commented)
+% save('path\example_2','e','n','nodes');
+
+% ------------------------------------------------------------------------
+% Helper function: weighted sum of kernel contributions
+% ------------------------------------------------------------------------
+function ss = weightedSum(xs, s, w, nodes, K, m, k, K1)
+    % First subinterval: regular kernel K (singularity absorbed by weight)
+    ss = sum(w(1:k) .* K(nodes(s), nodes(1:k), xs(1:k)));
+    % Remaining subintervals: singular kernel K1 (explicit singularity)
+    for r = 2:m
+        idx = (r-1)*k+1 : r*k;
+        ss = ss + sum(w(idx) .* K1(nodes(s), nodes(idx), xs(idx)));
+    end
+end
+
+% ------------------------------------------------------------------------
+% Gauss-Jacobi quadrature nodes and weights on [-1,1]
+% ------------------------------------------------------------------------
+function [x, w] = Gauss_Jacobi(k, a, b)
+    % Build symmetric tridiagonal Jacobi matrix
+    J = zeros(k);
+    for i = 1:k
+        if i == 1
+            J(i,i) = (b - a) / (a + b + 2);
+        else
+            J(i,i) = (b^2 - a^2) / ((2*i + a + b - 2) * (2*i + a + b));
+        end
+        if i < k
+            num = 2 * sqrt(i * (i + a) * (i + b) * (i + a + b));
+            den = (2*i + a + b) * sqrt((2*i + a + b)^2 - 1);
+            J(i,i+1) = num / den;
+            J(i+1,i) = num / den;
+        end
+    end
+    
+    % Eigenvalues = nodes, eigenvectors give weights
+    [V, D] = eig(J);
+    x = diag(D)';
+    [x, idx] = sort(x);
+    
+    % Weight normalization
+    w0 = 2^(a + b + 1) * beta(a + 1, b + 1);
+    w = w0 * (V(1, idx).^2)';
+end
