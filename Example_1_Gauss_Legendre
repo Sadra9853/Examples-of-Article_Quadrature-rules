@@ -1,0 +1,134 @@
+%% -----------  Fredholm with *compound* Gauss‑Jacobi  ----------------
+clc; clear; close all; format short
+% -------------------------------------------------------------------
+% 1. Parameters
+% -------------------------------------------------------------------
+a = 0;                      % left end
+b = 1;                      % right end
+k = 100;                      % nodes per sub‑interval
+m = 1;                      % number of sub‑intervals (k·m = n nodes)
+n = k*m;                    % total grid size
+h = (b-a)/m;                % length of one sub‑interval
+% 3. Examples % Exact solution (only for error estimation)
+example = 3;   % <<< choose example number Example 3.6  to Example 3.9
+switch example
+    case 1  %Example 3.6
+        e     = exp(1);
+        rho=-40;
+        A=2*e/(e-rho*(e-2));
+        exact = @(s) A*s;              % u(x)=Ax
+        f = @(t) 2*t;
+        K = @(t,s,u) rho*t.*exp(-s).*u;            % K(t,s,u)
+    case 2  %Example 3.8
+                e     = exp(1);
+        rho=-10.5;
+        B=2-5*e^(-1);
+     A=(1-sqrt(1 - 4*B*rho) )/(2*B*rho);
+        exact = @(t) A*t;  
+         f=@(t) t;
+        K=@(t,s,u) rho*t.*exp(-s).*u.^2;
+            case 3  %Example 3.9
+        rho=1/5;
+         exact = @(t) sin(pi *t)+(20-sqrt(391))/3*cos(pi*t);  
+         f=@(t) sin(pi *t);
+        K=@(t,s,u) rho*cos(pi*t)*sin(pi*s).*u.^3;
+end
+
+% -------------------------------------------------------------------
+% 3. Reference rule on [0,1]  (k nodes)
+% -------------------------------------------------------------------
+alpha = 0; beta = 0;   % parameters
+[refN,refW] = Gauss_Legendre (k,alpha,beta); 
+refN=(refN+1)/2;refW= refW * (2)^(-(alpha + beta + 1));
+% nodes, weights on [0,1]
+% -------------------------------------------------------------------
+% 4. Build global nodes / weights (linear mapping to each sub‑interval)
+% -------------------------------------------------------------------
+nodes = zeros(1,n);  w = zeros(1,n);
+cnt = 0;
+for p = 1:m
+    tL = a+(p-1)*h;   tR = tL+h;
+    nodes(cnt+(1:k)) = tL + (tR-tL)*refN;          % nodes
+    w(cnt+(1:k))     = refW*(tR-tL);              % weights
+    cnt = cnt + k;
+end
+
+% -------------------------------------------------------------------
+% 5. Initial guess & data
+% -------------------------------------------------------------------
+xs = zeros(1,n);           % first iterate
+ys = xs + 10;              % auxiliary array for convergence
+it = 0;                    % iteration counter
+
+
+
+% -------------------------------------------------------------------
+% 3. Compound jácobi (fixed‑point)
+% -------------------------------------------------------------------
+while max(abs(ys - xs)) > 1e-100 & it<200
+    ys = xs; it = it+1
+    for s = 1:n
+   xs(s) = f(nodes(s)) + weightedSum(xs,s,w,nodes,K);
+   %   xs(s) = 1/2* xs(s) + 1/2*( f(nodes(s)) + weightedSum(xs,s,w,nodes,K)); %Krasnoselskij sequence
+    end   
+end
+
+% -------------------------------------------------------------------
+% 6. Error & plot
+% -------------------------------------------------------------------
+err = abs(exact(nodes) - xs);
+max_err=max(err)
+figure; plot(nodes,err,'b.','LineWidth',2,'LineWidth',2,...
+    'MarkerSize',10,...
+    'MarkerEdgeColor','b' , 'MarkerFaceColor',[0.5,0.5,0.5]); grid on;
+xlabel('Nodes'); ylabel('ٍError'); title('Error of Gauss‑Jacobi)');
+ ax = gca;ax.FontSize = 16;
+% -------------------------------------------------------------------
+% 7. Save & helpers
+% -------------------------------------------------------------------
+% save('Fredholm_compound','err','max_err','n','nodes','xs','w','it');
+
+% ---------- weightedSum ------------------------------------------------
+function s = weightedSum(xs,loc,w,nodes,K)
+s = sum(w .* K(nodes(loc),nodes,xs));
+end
+
+% ---------- gaussJacobiRule -----------------------------------------
+function [x, w] = Gauss_Legendre(k, a, b)
+    % Gauss-Jacobi quadrature on [-1, 1]
+    % Inputs:
+    %   k - number of quadrature points
+    %   a, b - Jacobi parameters (a, b > -1)
+    % Outputs:
+    %   x - quadrature nodes (sorted)
+    %   w - quadrature weights
+    
+    % Method: Jacobi tridiagonal matrix
+    J = zeros(k);
+    
+    for i = 1:k
+        % Main diagonal elements
+        if i == 1
+            J(i,i) = (b - a) / (a + b + 2);
+        else
+            J(i,i) = (b^2 - a^2) / ((2*i + a + b - 2) * (2*i + a + b));
+        end
+        
+        % Off-diagonal elements
+        if i < k
+            num = 2 * sqrt(i * (i + a) * (i + b) * (i + a + b));
+            den = (2*i + a + b) * sqrt((2*i + a + b)^2 - 1);
+            J(i,i+1) = num / den;
+            J(i+1,i) = num / den;
+        end
+    end
+    
+    % Eigenvalues (quadrature nodes)
+    [V, D] = eig(J);
+    x = diag(D)';
+    [x, idx] = sort(x);
+    
+    % Quadrature weights
+    w0 = 2^(a + b + 1) * beta(a + 1, b + 1);  
+    w = w0 * (V(1, idx).^2)';
+end
