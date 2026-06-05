@@ -1,0 +1,112 @@
+% Solves Fredholm integral equation of the second kind using fixed-point iteration
+% with Gauss-Jacobi quadrature. The kernel may have an endpoint singularity
+% which is handled by the quadrature weight (1-x)^alpha.
+
+clear; clc; close all;
+
+%% Parameters
+k = 10;                       % number of quadrature nodes
+example = 1;                   % select example (1, 2, or 3)
+tol = 1e-100;                   % convergence tolerance
+max_iter = 50;                 % maximum number of iterations
+
+%% Problem definition (exact solution, right-hand side f, kernel K, singularity exponent alpha)
+switch example
+    case 1
+        rho   = 1/(2 * gamma(3/5));
+        exact = @(t) sqrt(1 - t);
+        f     = @(t) -rho * (exp(1) - 2) * exp(-t) + sqrt(1 - t);
+        K     = @(t, s, u) rho  *exp(-t + s) * u^(14/5);
+        % K_Singular =    = @(t, s, u) rho *(1-s)^alpha* exp(-t + s) *
+        % u^(14/5); it not used
+        alpha = -2/5;          % singularity exponent (0 < alpha < 1)
+        beta  = 0;             % no (1+x)^beta factor
+
+    case 2
+        rho   = 1/4 * gamma(1/2);
+        exact = @(s) (1 - s).^(4/9);
+        f     = @(t) -rho * (exp(1) - 2) * exp(-t) + (1 - t).^(4/9);
+        K     = @(t, s, u) rho * exp(-t) * exp(s) * u^3;
+        % K_Singular    = @(t, s, u) rho *(1-s)^alpha* exp(-t) * exp(s) * u^3;
+        alpha = -1/3;
+        beta  = 0;
+
+    case 3
+        exact = @(t) t;
+        f     = @(t) -(3 * exp(-t)) / (4 * gamma(1/3)) + t;
+        K     = @(t, s, u) (1/(3 * gamma(1/3))) * exp(-t) * u;
+        % K_Singular   = @(t, s, u) (1-s)^alpha*1/(3 * gamma(1/3))) * exp(-t) * u;
+        alpha = -2/3;
+        beta  = 0;
+end
+
+%% Gauss-Jacobi quadrature on [0,1] with weight (1-x)^alpha x^beta
+[nodes, weights] = gauss_jacobi(k, alpha, beta);
+nodes   = (nodes + 1) / 2;                     % map from [-1,1] to [0,1]
+weights = weights * 2^(-(alpha + beta + 1));  % adjust weights for [0,1]
+
+%% Initial guess
+u_new = f(ones(1, k)) / 2;
+u_old = inf(1, k);
+iter = 0;
+
+%% Fixed-point iteration (Gauss–Seidel style)
+tic
+while max(abs(u_old - u_new)) > tol && iter < max_iter
+    u_old = u_new;
+    iter = iter + 1;
+    for i = 1:k
+        u_new(i) = f(nodes(i)) + quadrature_sum(u_new, i, weights, nodes, K);
+    end
+end
+toc
+
+%% Error evaluation
+exact_vals = arrayfun(exact, nodes);
+error = abs(exact_vals - u_new);
+max_error = max(error);
+
+%% Plot error vs. nodes
+figure;
+plot(nodes, error, 'b--s', 'LineWidth', 2, 'MarkerSize', 6, 'MarkerEdgeColor', 'b');
+yline(max_error, '--r', sprintf('Y = %.10e', max_error), 'LineWidth', 2);
+yline(min(error), '--r', sprintf('Y = %.10e', min(error)), ...
+      'LabelHorizontalAlignment', 'right', 'LineWidth', 2);
+xlabel('Nodes'); ylabel('Absolute error');
+title(sprintf('Example %d: Error distribution (k = %d)', example, k));
+grid on;
+
+%% Save results (optional)
+filename = sprintf('example%d_error_k%d.mat', example, k);
+save(filename, 'error', 'k', 'nodes');
+
+%% Helper function: quadrature contribution for a given collocation point
+function sum_val = quadrature_sum(u_vals, idx, weights, nodes, kernel)
+    sum_val = 0;
+    for j = 1:length(u_vals)
+        sum_val = sum_val + weights(j) * kernel(nodes(idx), nodes(j), u_vals(j));
+    end
+end
+
+%% Gauss–Jacobi quadrature nodes and weights on [-1,1] (eigenvalue method)
+function [x, w] = gauss_jacobi(n, a, b)
+    J = zeros(n);
+    for i = 1:n
+        if i == 1
+            J(i,i) = (b - a) / (a + b + 2);
+        else
+            J(i,i) = (b^2 - a^2) / ((2*i + a + b - 2) * (2*i + a + b));
+        end
+        if i < n
+            num = 2 * sqrt(i * (i + a) * (i + b) * (i + a + b));
+            den = (2*i + a + b) * sqrt((2*i + a + b)^2 - 1);
+            J(i,i+1) = num / den;
+            J(i+1,i) = num / den;
+        end
+    end
+    [V, D] = eig(J);
+    x = diag(D)';
+    [x, idx] = sort(x);
+    w0 = 2^(a + b + 1) * beta(a + 1, b + 1);
+    w = w0 * (V(1, idx).^2)';
+end
