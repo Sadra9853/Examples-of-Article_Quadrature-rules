@@ -1,0 +1,108 @@
+%%  Newton–Cotes Fredholm solver 
+%  --------------------------------------------------------------------------
+%  * Uses a single Newton–Cotes rule of order k over the whole interval
+%  --------------------------------------------------------------------------
+
+clc; clear; close all; format short
+
+%% ---------- 1. Problem data -----------------------------------------------
+a  = 0;                                     % lower limit
+b  = 1;                                     % upper limit
+k = 8;                      % nodes per sub‑interval
+m = 1;                      % number of sub‑intervals (k·m = n nodes)
+n = k*m;                    % total grid size
+h  = (b-a)/n;                               % grid step
+
+% Exact solution (only for error estimation)
+example = 2;   % <<< choose example number Example 3.6  to Example 3.9
+switch example
+    case 1  %Example 3.6
+        e     = exp(1);
+        rho=-3;
+        A=2*e/(e-rho*(e-2));
+        exact = @(s) A*s;              % u(x)=Ax
+        f = @(t) 2*t;
+        K = @(t,s,u) rho*t.*exp(-s).*u;            % K(t,s,u)
+    case 2  %Example 3.8
+                e     = exp(1);
+        rho=-3.5;
+        B=2-5*e^(-1);
+     A=(1-sqrt(1 - 4*B*rho) )/(2*B*rho);
+        exact = @(t) A*t;  
+         f=@(t) t;
+        K=@(t,s,u) rho*t.*exp(-s).*u.^2;
+            case 3  %Example 3.9
+        rho=1/5;
+         exact = @(t) sin(pi *t)+(20-sqrt(391))/3*cos(pi*t);  
+         f=@(t) sin(pi *t);
+        K=@(t,s,u) rho*cos(pi*t)*sin(pi*s).*u.^3;
+end
+
+%% ---------- 2. Newton–Cotes weights --------------------------------------
+w = newtonCotesWeights(k)* k* h;               % weights for one block of k+1 nodes % scale for the standard rule
+
+%% ---------- 3. Grid & initial guess --------------------------------------
+I  = a:h:b;                                 % t_0 … t_n
+xs = f(ones(1,n+1));                       % numerical sloution
+ys = inf(1,n+1);                           % auxiliary array for convergence test
+it = 0;                                     % iteration counter
+
+%% ---------- 4. Fixed‑point iteration ------------------------------------
+while max(abs(ys - xs)) > 1e-100 & it<1000
+    ys = xs;
+    it = it + 1
+    
+    % Integral part for every node
+    temp = zeros(1,n+1);
+    for j = 1:n+1
+        temp(j) = integralPart(xs,j,I,K,w,k);
+    end
+    
+    % Update solution
+    for j = 1:n+1 
+        xs(j) = f(I(j)) +temp(j);  %Picard sequence
+
+        % xs(j) = 1/2*xs(j)+ 1/2*(f(I(j)) +temp(j)); %Krasnoselskij squence
+    end
+end
+
+%% ---------- 5. Post‑processing --------------------------------------------
+err = abs(exact(I) - xs);                    % error vector
+M   = max(err)                              % maximum error
+% save('D:\09127944942\amanuscript\New method to slove integral equation\Matlab\Fredholm\Example 1\Newton–Cotes\k=10n=20\Dim11_clean.mat','err','M','it','xs','I');
+
+figure; plot(I,err,'--bs','LineWidth',2,...
+    'MarkerSize',10,...
+    'MarkerEdgeColor','b' , 'MarkerFaceColor',[0.5,0.5,0.5]); grid on;
+    
+xlabel('x'); ylabel('Error'); title('Error – Newton–Cotes Fredholm');
+legend('error function','Location','SouthEast');
+ ax = gca;
+ax.FontSize = 16;
+
+%% ---------- 6. Helper functions -------------------------------------------
+% 6.1  integralPart – evaluates the integral for node `idx`
+function val = integralPart(xs, idx, nodes, K, w, k)
+    m   = numel(nodes)-1;                    % number of sub‑intervals
+    val = 0;
+    for j = 0:k:m-k                         % start of each block (0‑based)
+        for i = 1:k+1
+                  val = val + w(i) * K(nodes(idx), nodes(i+j), xs(i+j));
+        end
+    end
+end
+% 6.2  newtonCotesWeights – returns the weights w(1:k+1)
+function w = newtonCotesWeights(k)
+    syms y
+    I = 0:1/k:1;                            % reference points on [0,1]
+    R = zeros(k+1);                         % Vandermonde matrix
+    C = zeros(k+1,1);                       % exact integrals
+    
+    for r = 0:k
+        R(r+1,:) = I.^r;
+        C(r+1)   = int(y.^r, y, 0, 1);     % ∫_0^1 τ^r dτ
+    end
+    
+    ww = (R \ C)';                          % solve R * ww' = C
+    w  = ww;                            
+end
